@@ -112,5 +112,3 @@ Les contributions sont les bienvenues \! Si vous avez des idées d'amélioration
 Ce projet est sous licence [MIT](https://opensource.org/licenses/MIT).
 
 -----
-
-N'hésitez pas à me dire si vous souhaitez des ajustements ou des ajouts \!
