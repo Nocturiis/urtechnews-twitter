@@ -7,9 +7,9 @@ import json
 import random
 import tweepy
 from datetime import datetime, timedelta
+import re # Ajouté pour les expressions régulières
 
 # --- 1. Variables d'environnement (NE PAS METTRE LES CLÉS ICI DIRECTEMENT) ---
-# Ces variables seront configurées dans GitHub Secrets
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 TWITTER_API_KEY = os.getenv("TWITTER_API_KEY")
 TWITTER_API_SECRET = os.getenv("TWITTER_API_SECRET")
@@ -35,32 +35,30 @@ def get_tech_news():
     Récupère une actualité tech récente et pertinente depuis NewsAPI.org.
     """
     print("🔎 Récupération d'une actualité tech...")
-    # Date d'il y a 2 jours pour s'assurer d'avoir des actualités récentes et non expirées
     from_date = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
     params = {
-        'qInTitle': 'tech OR technology OR AI OR artificial intelligence OR startup OR innovation', # Recherche de mots-clés dans le titre
+        'qInTitle': 'tech OR technology OR AI OR artificial intelligence OR startup OR innovation OR software OR hardware OR cybersecurity OR gadgets', # Mots-clés plus précis
         'language': 'en',
         'sortBy': 'relevancy',
         'apiKey': NEWS_API_KEY,
-        'pageSize': 20, # Récupérer plusieurs articles pour choisir
-        'from': from_date
+        'pageSize': 20,
+        'from': from_date,
+        'category': 'technology' # Filtrage par catégorie "technology"
+        # 'excludeDomains': 'espn.com, cnn.com, bbc.com, sportsillustrated.com' # Exemple : décommentez et ajoutez si besoin
     }
     
-    # Tentative d'affiner la recherche pour obtenir des articles plus récents
     try:
         response = requests.get(NEWS_API_BASE_URL, params=params, timeout=10)
-        response.raise_for_status() # Lève une exception pour les codes d'état HTTP 4xx/5xx
+        response.raise_for_status()
         data = response.json()
 
         if data['status'] == 'ok' and data['articles']:
-            # Filtrer les articles sans titre ou description valides
             relevant_articles = [
                 a for a in data['articles']
                 if a['title'] and a['description'] and not (a['title'].lower() == '[removed]' or a['description'].lower() == '[removed]')
             ]
             
             if relevant_articles:
-                # Choisir un article aléatoire parmi les articles pertinents
                 selected_article = random.choice(relevant_articles)
                 print(f"✅ Actualité trouvée : {selected_article['title']}")
                 return {
@@ -90,9 +88,9 @@ def generate_tweet_with_mistral(news_item):
         f"You are a Twitter bot named 'UrTechNews'. Your goal is to tweet concise, engaging, "
         f"and informative updates about the latest tech news. "
         f"Based on the following news article, write a tweet (max 270 characters including hashtags and link). "
-        f"The tweet MUST include relevant tech hashtags (e.g., #TechNews, #AI, #Innovation). "
-        f"It MUST end with the article's URL and NOT include 'Read more' or similar phrases before the link. "
-        f"Focus on the most interesting aspect of the news. Do NOT use bullet points or lists.\n\n"
+        f"The tweet MUST include 2-4 **highly relevant tech hashtags** (e.g., #TechNews, #AI, #Innovation, #Software, #Hardware, #Cybersecurity, #Gadgets, #FutureTech, #DeepTech). "
+        f"It MUST end with the article's URL and NOT include 'Read more' or similar phrases before the link, nor any placeholder like '[Link]'. "
+        f"Focus on the most interesting aspect of the news. Do NOT use bullet points or lists. Ensure the tweet sounds professional and engaging.\n\n"
         f"Article Title: {news_item['title']}\n"
         f"Article Description: {news_item['description']}\n"
         f"Article URL: {news_item['url']}\n\n"
@@ -117,20 +115,27 @@ def generate_tweet_with_mistral(news_item):
         
         if 'choices' in data and data['choices']:
             tweet_content = data['choices'][0]['message']['content'].strip()
-            # Assurer que l'URL est à la fin et que la longueur est respectée
-            tweet_content = tweet_content.split('http')[0].strip() + " " + news_item['url']
-            
-            # Tronquer si trop long, en laissant de la place pour les hashtags et le lien
-            max_len = 270 - len(news_item['url']) - 5 # 5 pour les espaces et potentiels derniers caractères
-            if len(tweet_content) > max_len:
-                tweet_content = tweet_content[:max_len-3] + "..." # Tronquer et ajouter des points de suspension
-            
-            # Ajouter le lien à la fin si ce n'est pas déjà fait
-            if not tweet_content.endswith(news_item['url']):
-                 tweet_content += " " + news_item['url']
 
-            print(f"✅ Tweet généré : {tweet_content}")
-            return tweet_content
+            # --- Nouvelle logique de nettoyage et d'ajout du lien ---
+            # Nettoyer toute mention de "Link", "[Link]", "Read more", etc.
+            tweet_content = tweet_content.replace('[Link]', '').replace('Link', '').replace('Read more', '').strip()
+            # Supprimer toute URL partielle que l'IA aurait pu commencer à générer
+            tweet_content = re.sub(r'https?:\/\/\S*$', '', tweet_content).strip()
+            tweet_content = re.sub(r'\[.*?\]', '', tweet_content).strip() # Enlève tout ce qui est entre crochets
+
+            # Calculer la longueur maximale disponible pour le texte du tweet
+            # Un lien Twitter est "shortened" à 23 caractères quel que soit sa longueur réelle
+            remaining_chars_for_text = 280 - 23 - 1 # 280 total - 23 pour le lien - 1 pour l'espace avant le lien
+
+            # Tronquer le tweet si nécessaire AVANT d'ajouter le lien
+            if len(tweet_content) > remaining_chars_for_text:
+                tweet_content = tweet_content[:remaining_chars_for_text - 3] + "..." # Tronquer et ajouter "..."
+
+            # Ajouter le lien final
+            final_tweet = f"{tweet_content} {news_item['url']}"
+
+            print(f"✅ Tweet généré : {final_tweet}")
+            return final_tweet
         else:
             print(f"❌ Mistral AI : Aucune réponse valide. Réponse complète: {data}")
             return None
@@ -147,7 +152,6 @@ def tweet_status(tweet_text):
     """
     print(f"🚀 Publication du tweet : {tweet_text}")
     try:
-        # Utilisation de tweepy.Client pour l'API v2
         client = tweepy.Client(
             consumer_key=TWITTER_API_KEY,
             consumer_secret=TWITTER_API_SECRET,
@@ -155,15 +159,12 @@ def tweet_status(tweet_text):
             access_token_secret=TWITTER_ACCESS_TOKEN_SECRET
         )
 
-        # La méthode pour poster un tweet avec Client est create_tweet()
         response = client.create_tweet(text=tweet_text)
         
-        # Vous pouvez inspecter la réponse si vous voulez des détails sur le tweet créé
         print(f"✅ Tweet publié avec succès ! ID du tweet : {response.data['id']}")
         return True
     except tweepy.TweepyException as e:
         print(f"❌ ERREUR Tweepy lors de la publication du tweet : {e}")
-        # Affiche le code d'erreur et le message détaillé s'ils sont disponibles
         if hasattr(e, 'response') and e.response is not None:
             try:
                 error_json = e.response.json()
