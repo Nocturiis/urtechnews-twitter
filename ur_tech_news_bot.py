@@ -143,19 +143,33 @@ def generate_tweet_with_mistral(news_item):
 
 def tweet_status(tweet_text):
     """
-    Publie le tweet sur Twitter via l'API Tweepy.
+    Publie le tweet sur Twitter via l'API Tweepy (v2 Client).
     """
     print(f"🚀 Publication du tweet : {tweet_text}")
     try:
-        auth = tweepy.OAuthHandler(TWITTER_API_KEY, TWITTER_API_SECRET)
-        auth.set_access_token(TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_TOKEN_SECRET)
-        api = tweepy.API(auth, wait_on_rate_limit=True)
+        # Utilisation de tweepy.Client pour l'API v2
+        client = tweepy.Client(
+            consumer_key=TWITTER_API_KEY,
+            consumer_secret=TWITTER_API_SECRET,
+            access_token=TWITTER_ACCESS_TOKEN,
+            access_token_secret=TWITTER_ACCESS_TOKEN_SECRET
+        )
 
-        api.update_status(tweet_text)
-        print("✅ Tweet publié avec succès !")
+        # La méthode pour poster un tweet avec Client est create_tweet()
+        response = client.create_tweet(text=tweet_text)
+        
+        # Vous pouvez inspecter la réponse si vous voulez des détails sur le tweet créé
+        print(f"✅ Tweet publié avec succès ! ID du tweet : {response.data['id']}")
         return True
     except tweepy.TweepyException as e:
         print(f"❌ ERREUR Tweepy lors de la publication du tweet : {e}")
+        # Affiche le code d'erreur et le message détaillé s'ils sont disponibles
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_json = e.response.json()
+                print(f"Détails de l'erreur Twitter : {json.dumps(error_json, indent=2)}")
+            except json.JSONDecodeError:
+                print(f"Réponse d'erreur non-JSON : {e.response.text}")
         return False
     except Exception as e:
         print(f"❌ ERREUR inattendue lors de la publication du tweet : {e}")
